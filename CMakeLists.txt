@@ -31,6 +31,14 @@ target_sources(selectorFM
         Source/PluginProcessor.h
         Source/PluginEditor.cpp
         Source/PluginEditor.h
+        Source/RadioStream.h
+        Source/RadioStream.cpp
+        Source/RollingAudioBuffer.h
+        Source/RollingAudioBuffer.cpp
+        Source/SampleRecorder.h
+        Source/SampleRecorder.cpp 
+            
+
 )
 
 target_compile_definitions(selectorFM

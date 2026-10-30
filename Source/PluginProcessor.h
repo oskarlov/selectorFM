@@ -2,6 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
+#include "RadioStream.h"
+#include <atomic>
+#include "SampleRecorder.h"
 
 class SelectorFMAudioProcessor final : public juce::AudioProcessor
 {
@@ -65,6 +68,22 @@ public:
     void setGain(double gainValueDb);
 
     juce::String getLoadedFileName() const;
+
+
+
+    void startRadioStation(const juce::String& streamUrl);
+    void stopRadioStation();
+    bool radioPrimed = false;
+
+    void setPlatterHeld(bool held);
+
+    std::atomic<int64_t> radioPlaybackPosition = { 0 };
+
+    double getSecondsBehindLive() const;
+
+    void startSampling();
+    void stopSampling();
+    bool isSampling() const;
     
 
 private:
@@ -79,6 +98,15 @@ private:
         juce::AudioTransportSource transportSource;
 
         juce::String loadedFileName;
+
+        RadioStream radioStream;
+
+        SampleRecorder sampleRecorder;
+        
+
+        double currentSampleRate = 48000.0;
+
+        std::atomic<bool> platterHeld {false};
 
 };
 

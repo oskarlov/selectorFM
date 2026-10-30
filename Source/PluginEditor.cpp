@@ -10,100 +10,48 @@ SelectorFMAudioProcessorEditor (
 {
     setSize (500, 400);
 
-    addAndMakeVisible(openButton);
     addAndMakeVisible(playPauseButton);
-    addAndMakeVisible(stopButton);
+    addAndMakeVisible(sampleButton);
 
     addAndMakeVisible(fileNameLabel);
-    addAndMakeVisible(timeLabel);
+    addAndMakeVisible(liveDelayLabel);
+    addAndMakeVisible(stationNameLabel);
     addAndMakeVisible(positionSlider);
     addAndMakeVisible(gainSlider);
+    addAndMakeVisible(stationSlider);
 
     fileNameLabel.setText("No audio file loaded", juce::dontSendNotification);
 
-    timeLabel.setText("00:00 / 00:00", juce::dontSendNotification);
-
-    positionSlider.setRange(0.0, 1.0, 0.001);
-    positionSlider.setEnabled(false);
-
     gainSlider.setEnabled(false);
 
-    playPauseButton.setEnabled(false);
-    stopButton.setEnabled(false);
-
-
-
-    RadioStation station;
-
-    station.name = "Test_station";
-    station.streamUrl = "https.//s";
-    station.codec = "MP3";
-    station.bitrate = 192;
-
-    DBG("Station: " << station.name);
-    DBG("Bitrate: " << station.bitrate);
-
-
-
-
-    juce::URL url("https://de1.api.radio-browser.info/json/stations/search?name=jazz&limit=5");
-
-    DBG(url.toString(true));
-
-
-    auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
-    .withConnectionTimeoutMs(5000)
-    .withExtraHeaders("User-Agent: selectorFM/0.1\r\n");
-
-
-    auto stream = url.createInputStream(options);
-
-    if (stream == nullptr)
-    {
-        DBG("Could not connect");
-        return;
-    }
-
-    auto response = stream->readEntireStreamAsString();
-
-    DBG(response);
-
-
-
-
-
-
-    openButton.onClick = [this]
-    {
-        openFile();
-    };
 
     playPauseButton.onClick = [this]
     {
         if (processor.isPlaying())
-            processor.pause();
+            processor.stopRadioStation();
         else    
-            processor.play();
+        {
+        const int index = static_cast<int>(stationSlider.getValue());
+
+        const auto& station = stations[static_cast<size_t>(index)];
+
+        processor.startRadioStation(station.streamUrl);
+        }
         
         updateControls();
     };
 
-    stopButton.onClick = [this]
-    {
-        processor.stop();
-        updateControls();
-    };
-
     positionSlider.onDragStart = [this]
-    {
-        userIsDraggingPosition = true;
+
+    {   
+        platterBeingHeld = true;
+        processor.setPlatterHeld(true);
     };
 
     positionSlider.onDragEnd = [this]
     {
-        processor.setPosition(positionSlider.getValue());
-
-        userIsDraggingPosition = false;
+        platterBeingHeld = false;
+        processor.setPlatterHeld(false);
     };
 
 
@@ -113,11 +61,36 @@ SelectorFMAudioProcessorEditor (
 
     };
 
+    stationSlider.onValueChange = [this]
+    {
+        const int index = static_cast<int>(stationSlider.getValue());
+
+        const auto& station = stations[static_cast<size_t>(index)];
+
+        stationNameLabel.setText(
+            station.name,
+            juce::dontSendNotification
+        );
+    };
+
+    sampleButton.onClick = [this]
+    {
+        if (processor.isSampling())
+            processor.stopSampling();
+        else
+            processor.startSampling();
+
+        updateControls();
+    };
 
 
-    startTimerHz(20);
+
+    startTimerHz(60);
 
     updateControls();
+
+
+
 
 }
 
@@ -136,9 +109,9 @@ void SelectorFMAudioProcessorEditor::paint (
     g.setFont (22.0f);
 
     g.drawFittedText (
-        "Look a JUICE Plugin",
+        "selectorFM",
         getLocalBounds(),
-        juce::Justification::centred,
+        juce::Justification::bottomRight,
         1
     );
 
@@ -148,33 +121,26 @@ void SelectorFMAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced(20);
 
-    auto fileRow = area.removeFromTop(35);
+    auto headerSection = area.removeFromTop(120);
+    auto headerControls = headerSection.withSizeKeepingCentre(240, 40);
+    gainSlider.setBounds(headerSection.removeFromRight(120));
+    stationSlider.setBounds(headerSection.removeFromLeft(120));
+    stationNameLabel.setBounds(headerSection.removeFromLeft(150));
 
-    openButton.setBounds( fileRow.removeFromRight(100));
+    auto transportSection = area.removeFromBottom(70);
+    area.removeFromBottom(15);
+    playPauseButton.setBounds(transportSection.removeFromLeft(150));
+    sampleButton.setBounds(transportSection.removeFromRight(150));
 
-    fileRow.removeFromRight(10);
 
-    fileNameLabel.setBounds(fileRow);
+    auto mainSection = area;
+    auto timeArea = mainSection.removeFromBottom(30);
+    liveDelayLabel.setBounds(timeArea);
 
-    area.removeFromTop(20);
+    positionSlider.setBounds(mainSection.withSizeKeepingCentre(180, 180));
 
-    positionSlider.setBounds(area.removeFromTop(30));
 
-    timeLabel.setBounds(area.removeFromTop(25));
-
-    area.removeFromTop(20);
-
-    auto transportRow = area.removeFromTop(40);
-
-    playPauseButton.setBounds(transportRow.removeFromLeft(100));
-
-    stopButton.setBounds(transportRow.removeFromRight(100));
-
-    area.removeFromTop(20);
-
-    auto fxSection = area.removeFromTop(140);
-
-    gainSlider.setBounds(fxSection.removeFromLeft(120));
+    
 }
 
 
@@ -209,12 +175,6 @@ void SelectorFMAudioProcessorEditor::openFile()
                     juce::dontSendNotification
                 );
 
-                positionSlider.setRange(
-                    0.0,
-                    processor.getLengthInSeconds(),
-                    0.01
-                );
-
             }
 
             updateControls();
@@ -227,31 +187,44 @@ void SelectorFMAudioProcessorEditor::openFile()
 
 void SelectorFMAudioProcessorEditor::timerCallback()
 {
-    if (processor.hasFinished())
-        processor.stop();
-    
-    if (!userIsDraggingPosition)
+    if (processor.isPlaying() && !platterBeingHeld)
     {
-        positionSlider.setValue(processor.getCurrentPosition(), juce::dontSendNotification);
+        constexpr double rotationsPerSecond = 0.5;
+
+        platterPhase += rotationsPerSecond / 60.0;
+
+        if (platterPhase >= 1.0)
+            platterPhase -= 1.0;
+
+        positionSlider.setValue(
+            platterPhase,
+            juce::dontSendNotification
+        );
+
     }
 
-    timeLabel.setText(formatTime(processor.getCurrentPosition())+ " / " + formatTime(processor.getLengthInSeconds()), juce::dontSendNotification);
+    const double secondsBehind =
+    processor.getSecondsBehindLive();
 
-    updateControls();
+    liveDelayLabel.setText(juce::String(secondsBehind, 1), juce::dontSendNotification);
+
+
 }
 
 void SelectorFMAudioProcessorEditor::updateControls()
 {
     const bool loaded = processor.isFileLoaded();
     const bool playing = processor.isPlaying();
+    const bool sampling = processor.isSampling();
 
-    playPauseButton.setEnabled(loaded);
-    stopButton.setEnabled(loaded);
-    positionSlider.setEnabled(loaded);
     gainSlider.setEnabled(loaded);
 
     playPauseButton.setButtonText(
         playing ? "Pause" : "Play"
+    );
+
+    sampleButton.setButtonText(
+        sampling ? "Stop sampling" : "Sample"
     );
 }
 

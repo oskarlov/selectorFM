@@ -1,5 +1,10 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "RadioStream.h"
+#include <iostream>
+
+using namespace std;
+
 
 SelectorFMAudioProcessor::SelectorFMAudioProcessor()
     : AudioProcessor (
@@ -72,6 +77,8 @@ void SelectorFMAudioProcessor::prepareToPlay (
     int samplesPerBlock)
 {
 
+    currentSampleRate = sampleRate;
+
     transportSource.prepareToPlay(samplesPerBlock, sampleRate);
 
 
@@ -101,22 +108,83 @@ void SelectorFMAudioProcessor::processBlock (
     juce::AudioBuffer<float>& buffer,
     juce::MidiBuffer& midiMessages)
 {
+
+
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused (midiMessages);
 
-    if (readerSource == nullptr)
+    buffer.clear();
+
+    if (radioStream.isStreaming())
     {
-        buffer.clear();
+        if (!radioPrimed)
+        {
+            const int64_t initialDelay =
+                static_cast<int64_t>(
+                    currentSampleRate * 0.5
+                );
+
+            const auto writePosition =
+                radioStream.getWritePosition();
+            
+            if (writePosition < initialDelay)
+                return;
+
+            radioPlaybackPosition.store(writePosition - initialDelay); 
+                
+
+            radioPrimed = true;
+        }
+
+        const auto oldest =
+            radioStream.getOldestReadablePosition();
+
+        if (radioPlaybackPosition < oldest)
+        {
+            radioPlaybackPosition =
+                oldest;
+        }
+
+
+        if (platterHeld.load())
+        {
+            return;
+        }
+
+        const int framesRead =
+            radioStream.readAudioAt(
+                buffer,
+                radioPlaybackPosition,
+                buffer.getNumSamples()
+            );
+
+            
+        if (sampleRecorder.isRecording())
+        {
+            sampleRecorder.pushAudio(buffer);
+        }
+
+
+
+        radioPlaybackPosition.store(radioPlaybackPosition.load() + framesRead);
+
         return;
     }
 
-    juce::AudioSourceChannelInfo bufferInfo(&buffer, 0, buffer.getNumSamples());
-    transportSource.getNextAudioBlock(bufferInfo);
 
 
+    if (readerSource != nullptr)
+    {
+        juce::AudioSourceChannelInfo bufferInfo(
+            &buffer,
+            0,
+            buffer.getNumSamples()
+        );
 
-
-
+        transportSource.getNextAudioBlock(
+            bufferInfo
+        );
+    }
 
 }
 
@@ -205,7 +273,7 @@ void SelectorFMAudioProcessor::stop()
 
 bool SelectorFMAudioProcessor::isPlaying() const
 {
-    return transportSource.isPlaying();
+    return radioStream.isStreaming();
 }
 
 bool SelectorFMAudioProcessor::isFileLoaded() const
@@ -257,3 +325,80 @@ juce::String SelectorFMAudioProcessor::getLoadedFileName() const
     return loadedFileName;
 }
 
+
+
+
+void SelectorFMAudioProcessor::startRadioStation(
+    const juce::String& streamUrl)
+{
+    transportSource.stop();
+
+    radioPrimed = false;
+
+    radioStream.start(
+        streamUrl,
+        static_cast<int>(currentSampleRate)
+    );
+}
+
+void SelectorFMAudioProcessor::stopRadioStation()
+{
+    radioStream.stop();
+}
+
+void SelectorFMAudioProcessor::setPlatterHeld(bool held)
+{
+    platterHeld.store(held);
+}
+
+
+
+double SelectorFMAudioProcessor::getSecondsBehindLive() const
+{
+    if (!radioStream.isStreaming() || !radioPrimed)
+        return 0.0;
+
+    const auto writePosition =
+        radioStream.getWritePosition();
+
+
+    const auto playbackPosition =
+        radioPlaybackPosition.load();
+    
+
+
+    const auto framesBehind =
+        writePosition - playbackPosition;
+    
+    
+
+    return juce::jmax(
+        0.0,
+        static_cast<double>(framesBehind)
+            / currentSampleRate
+    );
+}
+
+void SelectorFMAudioProcessor::startSampling()
+{
+    auto file =
+        juce::File::getSpecialLocation(
+            juce::File::userDesktopDirectory
+        )
+        .getChildFile("selectorFM_sample.wav");
+
+    sampleRecorder.start(
+        file,
+        currentSampleRate
+    );
+}
+
+void SelectorFMAudioProcessor::stopSampling()
+{
+    sampleRecorder.stop();
+}
+
+bool SelectorFMAudioProcessor::isSampling() const
+{
+    return sampleRecorder.isRecording();
+}
